@@ -1,0 +1,80 @@
+name: Extract and Notify via Telegram Bot
+
+on:
+  repository_dispatch:
+    types: [extract_from_bot]
+
+jobs:
+  extract-and-notify:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Extract Room Info from Script
+      id: extract
+      run: |
+        # client_payload에서 매물번호를 가져와 스크립트 실행
+        ARTICLE_NO="${{ github.event.client_payload.article_no }}"
+        echo "Extracting info for article: $ARTICLE_NO"
+        
+        # 스크립트를 실행하고 결과를 "RESULT_JSON" 환경 변수에 저장
+        RESULT_JSON=$(python extract_room_cli.py "$ARTICLE_NO" --json)
+        echo "RESULT_JSON<<EOF" >> $GITHUB_ENV
+        echo "$RESULT_JSON" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+    - name: Send Result via Telegram
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const result = JSON.parse(process.env.RESULT_JSON);
+          const chatId = ${{ github.event.client_payload.chat_id }};
+          const botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"; # GitHub Secrets에서 토큰 가져오기
+
+          let message = '';
+          if (result.success) {
+            message += `🏠 **동호수 추출 결과**\n\n`;
+            message += `✅ **성공!**\n`;
+            message += `> **매물번호**: ${result.article_no || 'N/A'}\n`;
+            message += `> **단지명**: ${result.complex_name || '정보없음'}\n`;
+            message += `> **가격**: ${result.price || '정보없음'}\n`;
+            message += `> **동**: ${result.dong || '정보없음'}\n`;
+            message += `> **호수**: ${result.ho || '정보없음'}\n`;
+            message += `> **전체주소**: ${result.full_address || '정보없음'}\n`;
+          } else {
+            message += `❌ **추출 실패**\n\n`;
+            message += `> **오류**: ${result.error || '알 수 없는 오류가 발생했습니다.'}`;
+          }
+
+          const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+          const payload = {
+            chat_id: chatId,
+            text: message,
+            parse_mode: 'Markdown'
+          };
+
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          const responseData = await response.json();
+          if (!response.ok) {
+            console.error('Failed to send message:', responseData);
+            throw new Error(`Telegram API request failed with status ${response.status}`);
+          }
+          
+          console.log('Successfully sent message to Telegram.');
