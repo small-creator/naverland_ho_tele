@@ -17,21 +17,20 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GITHUB_REPO = os.getenv("GITHUB_REPO")
 # GitHub PAT (repo, workflow 스코프 권한 필요)
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-# Vercel KV URL (Vercel 프로젝트에 KV 저장소를 연결하면 자동으로 주입됨)
-VERCEL_KV_URL = os.getenv("KV_URL")
+# Vercel KV 또는 Upstash Redis URL
+REDIS_URL = os.getenv("REDIS_URL")
 
-# --- Vercel KV (Redis) 연결 ---
+# --- Redis 연결 ---
 try:
-    if VERCEL_KV_URL:
-        # Vercel KV URL을 사용하여 Redis 클라이언트 생성
-        redis_client = redis.from_url(VERCEL_KV_URL)
-        logger.info("Successfully connected to Vercel KV.")
+    if REDIS_URL:
+        redis_client = redis.from_url(REDIS_URL)
+        logger.info("Successfully connected to Redis.")
     else:
         redis_client = None
-        logger.warning("KV_URL is not set. Rate limiting will be disabled.")
+        logger.warning("REDIS_URL is not set. Rate limiting will be disabled.")
 except Exception as e:
     redis_client = None
-    logger.error(f"Failed to connect to Vercel KV: {e}")
+    logger.error(f"Failed to connect to Redis: {e}")
 
 
 # --- 상수 ---
@@ -105,7 +104,8 @@ def process_extraction_request(chat_id: int, article_no: str):
 
         except Exception as e:
             logger.error(f"Redis error for chat_id {chat_id}: {e}")
-            pass
+            send_telegram_message(chat_id, "오류: 사용량 확인 중 문제가 발생했습니다. 관리자에게 문의하세요.")
+            return
     
     # GitHub Actions 실행
     trigger_github_action(chat_id, article_no)
