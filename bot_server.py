@@ -41,6 +41,7 @@ except Exception as e:
 # --- 상수 ---
 DEFAULT_DAILY_LIMIT = 5  # 기본 일일 API 호출 제한 횟수
 DEFAULT_TOTAL_LIMIT = 100 # 기본 총 API 호출 제한 횟수
+MAX_ARTICLE_NUMBERS_PER_REQUEST = 5 # 한 번에 요청할 수 있는 최대 매물번호 개수
 SECONDS_IN_A_DAY = 86400 # 24 * 60 * 60
 
 # --- 헬퍼 함수 ---
@@ -177,7 +178,9 @@ async def telegram_webhook(request: Request):
         welcome_message = (
             "안녕하세요! 👋\n"
             "네이버 부동산 동호수 추출 봇입니다.\n\n"
-            "조회하고 싶은 매물번호를 바로 입력해주세요.\n\n"            "📊 **사용량 확인**: `/myusage`"
+            "조회하고 싶은 매물번호를 바로 입력해주세요.\n"
+            "여러 개를 입력할 경우 쉼표(,)로 구분해주세요. (최대 5개)\n\n"
+            "📊 **사용량 확인**: `/myusage`"
         )
         send_telegram_message(chat_id, welcome_message)
         return Response(status_code=200)
@@ -211,19 +214,44 @@ async def telegram_webhook(request: Request):
             send_telegram_message(chat_id, "사용량 관리 기능이 비활성화되어 있습니다.")
         return Response(status_code=200)
 
-    # 3. 입력값이 숫자로만 되어 있는지 확인
+    # 3. 매물번호 입력 처리 (숫자 또는 쉼표로 구분된 숫자)
+    elif ',' in text:
+        article_numbers = [an.strip() for an in text.split(',') if an.strip()]
+        
+        if not article_numbers:
+            error_message = "쉼표로 구분된 매물번호가 없습니다. 😥"
+            send_telegram_message(chat_id, error_message)
+            return Response(status_code=200)
+
+        if len(article_numbers) > MAX_ARTICLE_NUMBERS_PER_REQUEST:
+            error_message = f"한 번에 최대 {MAX_ARTICLE_NUMBERS_PER_REQUEST}개의 매물번호만 조회할 수 있습니다. 😥"
+            send_telegram_message(chat_id, error_message)
+            return Response(status_code=200)
+
+        invalid_numbers = [an for an in article_numbers if not an.isdigit()]
+        if invalid_numbers:
+            error_message = f"유효하지 않은 매물번호가 포함되어 있습니다: {', '.join(invalid_numbers)} 😥"
+            send_telegram_message(chat_id, error_message)
+            return Response(status_code=200)
+        
+        # 모든 매물번호가 유효하면 각각 처리
+        for article_no in article_numbers:
+            process_extraction_request(chat_id, article_no)
+        return Response(status_code=200)
+
+    # 4. 단일 매물번호 입력 처리 (기존 isdigit 로직)
     elif text.isdigit():
         process_extraction_request(chat_id, text)
         return Response(status_code=200)
 
-    # 4. 기존 /extract 명령어 호환성 처리
+    # 5. 기존 /extract 명령어 호환성 처리
     elif text.lower().startswith("/extract"):
         parts = text.split()
         if len(parts) == 2 and parts[1].isdigit():
             process_extraction_request(chat_id, parts[1])
             return Response(status_code=200)
 
-    # 5. 그 외의 텍스트 처리 (잘못된 입력)
+    # 6. 그 외의 텍스트 처리 (잘못된 입력)
     else:
         error_message = (
             "잘못된 입력입니다. 😥\n"
