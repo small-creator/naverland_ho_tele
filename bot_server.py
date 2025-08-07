@@ -83,6 +83,34 @@ def trigger_github_action(chat_id: int, article_no: str):
         send_telegram_message(chat_id, "오류: 조회 요청에 실패했습니다. 잠시 후 다시 시도해주세요.")
 
 
+def process_extraction_request(chat_id: int, article_no: str):
+    """사용량 제한을 체크하고 GitHub Actions를 실행시키는 로직"""
+    # --- 사용량 제한 로직 ---
+    if redis_client:
+        try:
+            current_usage = redis_client.get(str(chat_id))
+            if current_usage is None:
+                current_usage = 0
+            
+            if int(current_usage) >= DAILY_LIMIT:
+                logger.warning(f"Rate limit exceeded for chat_id {chat_id}")
+                send_telegram_message(chat_id, f"하루 최대 조회 횟수({DAILY_LIMIT}회)를 초과했습니다. 내일 다시 시도해주세요.")
+                return
+
+            p = redis_client.pipeline()
+            p.incr(str(chat_id))
+            p.expire(str(chat_id), SECONDS_IN_A_DAY)
+            p.execute()
+            logger.info(f"Usage for {chat_id} incremented.")
+
+        except Exception as e:
+            logger.error(f"Redis error for chat_id {chat_id}: {e}")
+            pass
+    
+    # GitHub Actions 실행
+    trigger_github_action(chat_id, article_no)
+
+
 # --- API 엔드포인트 ---
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -97,48 +125,40 @@ async def telegram_webhook(request: Request):
 
     chat_id = message["chat"]["id"]
     text = message["text"].strip()
-
-    # 명령어 파싱
-    if not text.startswith("/extract"):
-        send_telegram_message(chat_id, "올바른 명령어를 입력해주세요. 예: /extract 12345678")
+    
+    # --- 명령어 및 입력 텍스트 처리 로직 개선 ---
+    
+    # 1. /start 명령어 처리
+    if text == "/start":
+        welcome_message = (
+            "안녕하세요! 👋\n"
+            "네이버 부동산 동호수 추출 봇입니다.\n\n"
+            "조회하고 싶은 매물번호를 바로 입력해주세요."
+        )
+        send_telegram_message(chat_id, welcome_message)
         return Response(status_code=200)
 
-    parts = text.split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        send_telegram_message(chat_id, "매물번호가 올바르지 않습니다. 예: /extract 12345678")
+    # 2. 입력값이 숫자로만 되어 있는지 확인
+    if text.isdigit():
+        process_extraction_request(chat_id, text)
         return Response(status_code=200)
-    
-    article_no = parts[1]
 
-    # --- 사용량 제한 로직 ---
-    if redis_client:
-        try:
-            # 현재 사용 횟수 가져오기
-            current_usage = redis_client.get(str(chat_id))
-            if current_usage is None:
-                current_usage = 0
-            
-            if int(current_usage) >= DAILY_LIMIT:
-                logger.warning(f"Rate limit exceeded for chat_id {chat_id}")
-                send_telegram_message(chat_id, f"하루 최대 조회 횟수({DAILY_LIMIT}회)를 초과했습니다. 내일 다시 시도해주세요.")
-                return Response(status_code=200)
+    # 3. 기존 /extract 명령어 호환성 처리
+    if text.lower().startswith("/extract"):
+        parts = text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            process_extraction_request(chat_id, parts[1])
+            return Response(status_code=200)
 
-            # 사용 횟수 1 증가 및 만료 시간 설정
-            p = redis_client.pipeline()
-            p.incr(str(chat_id))
-            p.expire(str(chat_id), SECONDS_IN_A_DAY)
-            p.execute()
-            logger.info(f"Usage for {chat_id} incremented.")
-
-        except Exception as e:
-            logger.error(f"Redis error for chat_id {chat_id}: {e}")
-            # Redis에 문제가 생겨도 일단 서비스는 되도록 처리
-            pass
-    
-    # GitHub Actions 실행
-    trigger_github_action(chat_id, article_no)
+    # 4. 그 외의 텍스트 처리 (잘못된 입력)
+    error_message = (
+        "잘못된 입력입니다. 😥\n"
+        "숫자로 된 매물번호만 입력해주세요."
+    )
+    send_telegram_message(chat_id, error_message)
 
     return Response(status_code=200)
+
 
 @app.get("/")
 def read_root():
