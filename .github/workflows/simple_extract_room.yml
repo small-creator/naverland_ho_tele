@@ -25,11 +25,8 @@ jobs:
     - name: Extract Room Info from Script
       id: extract
       run: |
-        # client_payload에서 매물번호를 가져와 스크립트 실행
         ARTICLE_NO="${{ github.event.client_payload.article_no }}"
         echo "Extracting info for article: $ARTICLE_NO"
-        
-        # 스크립트를 실행하고 결과를 "RESULT_JSON" 환경 변수에 저장
         RESULT_JSON=$(python extract_room_cli.py "$ARTICLE_NO" --json)
         echo "RESULT_JSON<<EOF" >> $GITHUB_ENV
         echo "$RESULT_JSON" >> $GITHUB_ENV
@@ -41,7 +38,7 @@ jobs:
         script: |
           const result = JSON.parse(process.env.RESULT_JSON);
           const chatId = ${{ github.event.client_payload.chat_id }};
-          const botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}"; # GitHub Secrets에서 토큰 가져오기
+          const botToken = "${{ secrets.TELEGRAM_BOT_TOKEN }}";
 
           let message = '';
           if (result.success) {
