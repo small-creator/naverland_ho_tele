@@ -4,6 +4,7 @@ import requests
 from fastapi import FastAPI, Request, Response
 import logging
 from datetime import datetime, timedelta, timezone
+import pytz
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -114,15 +115,21 @@ def process_extraction_request(chat_id: int, article_no: str):
                 send_telegram_message(chat_id, f"총 조회 횟수({user_total_limit}회)를 초과했습니다. 더 이상 이용하실 수 없습니다.")
                 return
 
-            # 다음 자정까지 남은 시간 계산 (UTC 기준)
-            now_utc = datetime.now(timezone.utc)
-            tomorrow_midnight_utc = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-            seconds_until_midnight = (tomorrow_midnight_utc - now_utc).total_seconds()
+            # --- 다음 한국 시간 자정까지 남은 시간 계산 ---
+            kst = pytz.timezone('Asia/Seoul')
+            now_kst = datetime.now(kst)
+            
+            # 다음 날 자정 (0시 0분 0초) 계산
+            tomorrow_midnight_kst = (now_kst + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            
+            # 남은 시간(초) 계산
+            seconds_until_midnight = (tomorrow_midnight_kst - now_kst).total_seconds()
+            # --- 계산 끝 ---
 
             # 사용량 증가
             p = redis_client.pipeline()
             p.incr(daily_usage_key)
-            # 일일 사용량은 다음 자정까지 만료
+            # 일일 사용량은 다음 한국 시간 자정까지 만료
             p.expire(daily_usage_key, int(seconds_until_midnight))
             p.incr(total_usage_key) # 총 사용량은 만료 없음
             p.execute()
