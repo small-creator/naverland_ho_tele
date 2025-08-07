@@ -287,7 +287,7 @@ def main():
     result = extractor.extract_room(args.article_no, args.verbose)
     
     if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print(json.dumps(result, ensure_ascii=False))
     else:
         if result['success']:
             print(f"Success!")
