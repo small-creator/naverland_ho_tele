@@ -37,8 +37,8 @@ except Exception as e:
 
 
 # --- 상수 ---
-DAILY_LIMIT = 5  # 사용자별 하루 API 호출 제한 횟수 (5회로 변경)
-TOTAL_LIMIT = 100 # 사용자별 총 API 호출 제한 횟수
+DEFAULT_DAILY_LIMIT = 5  # 기본 일일 API 호출 제한 횟수
+DEFAULT_TOTAL_LIMIT = 100 # 기본 총 API 호출 제한 횟수
 SECONDS_IN_A_DAY = 86400 # 24 * 60 * 60
 
 # --- 헬퍼 함수 ---
@@ -89,34 +89,37 @@ def process_extraction_request(chat_id: int, article_no: str):
     """사용량 제한을 체크하고 GitHub Actions를 실행시키는 로직"""
     if redis_client:
         try:
-            daily_key = f"usage:daily:{chat_id}"
-            total_key = f"usage:total:{chat_id}"
+            daily_usage_key = f"usage:daily:{chat_id}"
+            total_usage_key = f"usage:total:{chat_id}"
+            daily_limit_key = f"limit:daily:{chat_id}"
+            total_limit_key = f"limit:total:{chat_id}"
 
-            current_daily_usage = redis_client.get(daily_key)
-            current_total_usage = redis_client.get(total_key)
+            # 사용자별 제한 값 조회, 없으면 기본값 사용
+            user_daily_limit = int(redis_client.get(daily_limit_key) or DEFAULT_DAILY_LIMIT)
+            user_total_limit = int(redis_client.get(total_limit_key) or DEFAULT_TOTAL_LIMIT)
 
-            current_daily_usage = int(current_daily_usage) if current_daily_usage else 0
-            current_total_usage = int(current_total_usage) if current_total_usage else 0
+            current_daily_usage = int(redis_client.get(daily_usage_key) or 0)
+            current_total_usage = int(redis_client.get(total_usage_key) or 0)
 
             # 일일 사용량 제한 체크
-            if current_daily_usage >= DAILY_LIMIT:
-                logger.warning(f"Daily rate limit exceeded for chat_id {chat_id}")
-                send_telegram_message(chat_id, f"하루 최대 조회 횟수({DAILY_LIMIT}회)를 초과했습니다. 내일 다시 시도해주세요.")
+            if current_daily_usage >= user_daily_limit:
+                logger.warning(f"Daily rate limit exceeded for chat_id {chat_id}. Limit: {user_daily_limit}")
+                send_telegram_message(chat_id, f"하루 최대 조회 횟수({user_daily_limit}회)를 초과했습니다. 내일 다시 시도해주세요.")
                 return
 
             # 총 사용량 제한 체크
-            if current_total_usage >= TOTAL_LIMIT:
-                logger.warning(f"Total rate limit exceeded for chat_id {chat_id}")
-                send_telegram_message(chat_id, f"총 조회 횟수({TOTAL_LIMIT}회)를 초과했습니다. 더 이상 이용하실 수 없습니다.")
+            if current_total_usage >= user_total_limit:
+                logger.warning(f"Total rate limit exceeded for chat_id {chat_id}. Limit: {user_total_limit}")
+                send_telegram_message(chat_id, f"총 조회 횟수({user_total_limit}회)를 초과했습니다. 더 이상 이용하실 수 없습니다.")
                 return
 
             # 사용량 증가
             p = redis_client.pipeline()
-            p.incr(daily_key)
-            p.expire(daily_key, SECONDS_IN_A_DAY) # 일일 사용량은 24시간 후 만료
-            p.incr(total_key) # 총 사용량은 만료 없음
+            p.incr(daily_usage_key)
+            p.expire(daily_usage_key, SECONDS_IN_A_DAY) # 일일 사용량은 24시간 후 만료
+            p.incr(total_usage_key) # 총 사용량은 만료 없음
             p.execute()
-            logger.info(f"Usage for {chat_id} incremented. Daily: {current_daily_usage + 1}/{DAILY_LIMIT}, Total: {current_total_usage + 1}/{TOTAL_LIMIT}")
+            logger.info(f"Usage for {chat_id} incremented. Daily: {current_daily_usage + 1}/{user_daily_limit}, Total: {current_total_usage + 1}/{user_total_limit}")
 
         except Exception as e:
             logger.error(f"Redis error for chat_id {chat_id}: {e}")
@@ -165,23 +168,26 @@ async def telegram_webhook(request: Request):
         send_telegram_message(chat_id, welcome_message)
         return Response(status_code=200)
 
-    # 2. /myusage 명령어 처리 (새로 추가)
+    # 2. /myusage 명령어 처리
     elif text == "/myusage":
         if redis_client:
             try:
-                daily_key = f"usage:daily:{chat_id}"
-                total_key = f"usage:total:{chat_id}"
+                daily_usage_key = f"usage:daily:{chat_id}"
+                total_usage_key = f"usage:total:{chat_id}"
+                daily_limit_key = f"limit:daily:{chat_id}"
+                total_limit_key = f"limit:total:{chat_id}"
 
-                current_daily_usage = redis_client.get(daily_key)
-                current_total_usage = redis_client.get(total_key)
+                # 사용자별 제한 값 조회, 없으면 기본값 사용
+                user_daily_limit = int(redis_client.get(daily_limit_key) or DEFAULT_DAILY_LIMIT)
+                user_total_limit = int(redis_client.get(total_limit_key) or DEFAULT_TOTAL_LIMIT)
 
-                current_daily_usage = int(current_daily_usage) if current_daily_usage else 0
-                current_total_usage = int(current_total_usage) if current_total_usage else 0
+                current_daily_usage = int(redis_client.get(daily_usage_key) or 0)
+                current_total_usage = int(redis_client.get(total_usage_key) or 0)
 
                 usage_message = (
                     f"📊 **사용량 현황**\n\n"
-                    f"일일 사용량: {current_daily_usage}/{DAILY_LIMIT}회\n"
-                    f"총 사용량: {current_total_usage}/{TOTAL_LIMIT}회"
+                    f"일일 사용량: {current_daily_usage}/{user_daily_limit}회\n"
+                    f"총 사용량: {current_total_usage}/{user_total_limit}회"
                 )
                 send_telegram_message(chat_id, usage_message)
             except Exception as e:
