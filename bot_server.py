@@ -3,6 +3,7 @@ import redis
 import requests
 from fastapi import FastAPI, Request, Response
 import logging
+from datetime import datetime, timedelta, timezone
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
@@ -104,7 +105,7 @@ def process_extraction_request(chat_id: int, article_no: str):
             # 일일 사용량 제한 체크
             if current_daily_usage >= user_daily_limit:
                 logger.warning(f"Daily rate limit exceeded for chat_id {chat_id}. Limit: {user_daily_limit}")
-                send_telegram_message(chat_id, f"하루 최대 조회 횟수({user_daily_limit}회)를 초과했습니다. 내일 다시 시도해주세요.")
+                send_telegram_message(chat_id, f"하루 최대 조회 횟수({user_daily_limit}회)를 초과했습니다. 내일 자정에 초기화됩니다.")
                 return
 
             # 총 사용량 제한 체크
@@ -113,10 +114,16 @@ def process_extraction_request(chat_id: int, article_no: str):
                 send_telegram_message(chat_id, f"총 조회 횟수({user_total_limit}회)를 초과했습니다. 더 이상 이용하실 수 없습니다.")
                 return
 
+            # 다음 자정까지 남은 시간 계산 (UTC 기준)
+            now_utc = datetime.now(timezone.utc)
+            tomorrow_midnight_utc = (now_utc + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            seconds_until_midnight = (tomorrow_midnight_utc - now_utc).total_seconds()
+
             # 사용량 증가
             p = redis_client.pipeline()
             p.incr(daily_usage_key)
-            p.expire(daily_usage_key, SECONDS_IN_A_DAY) # 일일 사용량은 24시간 후 만료
+            # 일일 사용량은 다음 자정까지 만료
+            p.expire(daily_usage_key, int(seconds_until_midnight))
             p.incr(total_usage_key) # 총 사용량은 만료 없음
             p.execute()
             logger.info(f"Usage for {chat_id} incremented. Daily: {current_daily_usage + 1}/{user_daily_limit}, Total: {current_total_usage + 1}/{user_total_limit}")
