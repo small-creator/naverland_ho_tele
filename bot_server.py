@@ -40,7 +40,7 @@ except Exception as e:
 
 # --- 상수 ---
 DEFAULT_DAILY_LIMIT = 5  # 기본 일일 API 호출 제한 횟수
-DEFAULT_TOTAL_LIMIT = 100 # 기본 총 API 호출 제한 횟수
+DEFAULT_TOTAL_LIMIT = 5 # 기본 총 API 호출 제한 횟수
 MAX_ARTICLE_NUMBERS_PER_REQUEST = 5 # 한 번에 요청할 수 있는 최대 매물번호 개수
 SECONDS_IN_A_DAY = 86400 # 24 * 60 * 60
 
